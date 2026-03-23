@@ -92,7 +92,7 @@ All signals follow the ICLink specification naming exactly:
 |-----------|---------|-------------|
 | `HEADER_WIDTH` | 32 | Width of routing/VC header field (bits) |
 | `PAYLOAD_WIDTH` | 128 | Width of flit payload field (bits) |
-| `CREDIT_WIDTH` | 4 | Width of credit counters (bits); max credits = 2^CREDIT_WIDTH |
+| `CREDIT_WIDTH` | 8 | Width of credit counters (bits); max credits = 2^CREDIT_WIDTH |
 | `NUM_VC` | 4 | Number of Virtual Channels per logical channel |
 | `CREDITS_PER_VC` | 8 | Initial credits per VC at reset (total = NUM_VC × CREDITS_PER_VC) |
 

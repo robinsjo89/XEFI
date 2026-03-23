@@ -576,6 +576,11 @@ module iclink_master
   //   NOTE: The per-channel credit counters (req_credit_q, dat_tx_credit_q,
   //         reqdat_credit_q) govern actual forward-progress guarantees.  The
   //         VC pool below provides additional visibility for QoS accounting.
+  //
+  //   Race-condition avoidance: all channel contributions to the same VC are
+  //   accumulated into a signed net-delta first, then applied as one atomic
+  //   read-modify-write per VC per clock cycle. This prevents lost updates when
+  //   multiple channels target the same VC simultaneously.
   // ===========================================================================
 
   // Per-VC consumed-credit counters (one entry per VC)
@@ -587,32 +592,45 @@ module iclink_master
   assign dat_vc_id    = app_dat_header[$clog2(NUM_VC)-1:0];
   assign reqdat_vc_id = app_reqdat_header[$clog2(NUM_VC)-1:0];
 
+  // Signed net-delta accumulators: one per VC, computed combinatorially.
+  // Using signed arithmetic wider than CREDIT_WIDTH to handle all combinations.
+  logic signed [CREDIT_WIDTH:0] vc_delta [NUM_VC]; // +1 bit for sign
+
+  always_comb begin : proc_vc_delta
+    // Initialise all deltas to zero
+    for (int v = 0; v < NUM_VC; v++)
+      vc_delta[v] = '0;
+
+    // REQ channel: +1 on send, -credit on return
+    if (tx_req_valid)
+      vc_delta[req_vc_id] = vc_delta[req_vc_id] + (CREDIT_WIDTH+1)'(1);
+    if (|rx_req_credit)
+      vc_delta[req_vc_id] = vc_delta[req_vc_id] - (CREDIT_WIDTH+1)'(rx_req_credit);
+
+    // DAT TX channel: +1 on send, -credit on return
+    if (tx_dat_valid)
+      vc_delta[dat_vc_id] = vc_delta[dat_vc_id] + (CREDIT_WIDTH+1)'(1);
+    if (|rx_dat_credit)
+      vc_delta[dat_vc_id] = vc_delta[dat_vc_id] - (CREDIT_WIDTH+1)'(rx_dat_credit);
+
+    // REQDAT channel: +1 on send, -credit on return
+    if (tx_reqdat_valid)
+      vc_delta[reqdat_vc_id] = vc_delta[reqdat_vc_id] + (CREDIT_WIDTH+1)'(1);
+    if (|rx_reqdat_credit)
+      vc_delta[reqdat_vc_id] = vc_delta[reqdat_vc_id] - (CREDIT_WIDTH+1)'(rx_reqdat_credit);
+  end
+
   always_ff @(posedge clk or negedge rst_n) begin : proc_vc_accounting
     if (!rst_n) begin
       for (int v = 0; v < NUM_VC; v++)
         vc_credits_used_q[v] <= '0;
     end else begin
-      // Increment VC usage when REQ flit is sent on that VC
-      if (tx_req_valid)
-        vc_credits_used_q[req_vc_id] <= vc_credits_used_q[req_vc_id] + 1'b1;
-
-      // Decrement VC usage when REQ credit is returned (simple model: credit
-      // return is applied evenly across active VCs; full VC-tagged credit return
-      // would require the credit field to carry the VC ID, which is spec-optional)
-      if (|rx_req_credit)
-        vc_credits_used_q[req_vc_id] <= vc_credits_used_q[req_vc_id] - rx_req_credit;
-
-      // Outbound DAT VC accounting
-      if (tx_dat_valid)
-        vc_credits_used_q[dat_vc_id] <= vc_credits_used_q[dat_vc_id] + 1'b1;
-      if (|rx_dat_credit)
-        vc_credits_used_q[dat_vc_id] <= vc_credits_used_q[dat_vc_id] - rx_dat_credit;
-
-      // REQDAT VC accounting
-      if (tx_reqdat_valid)
-        vc_credits_used_q[reqdat_vc_id] <= vc_credits_used_q[reqdat_vc_id] + 1'b1;
-      if (|rx_reqdat_credit)
-        vc_credits_used_q[reqdat_vc_id] <= vc_credits_used_q[reqdat_vc_id] - rx_reqdat_credit;
+      // Apply the pre-computed atomic delta for each VC in a single write
+      for (int v = 0; v < NUM_VC; v++) begin
+        if (vc_delta[v] != '0)
+          vc_credits_used_q[v] <= CREDIT_WIDTH'(
+            $signed({1'b0, vc_credits_used_q[v]}) + vc_delta[v]);
+      end
     end
   end
 
