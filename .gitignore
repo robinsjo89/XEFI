@@ -1,0 +1,21 @@
+# Simulation build outputs
+sim/
+vcd/
+
+# Common EDA tool work directories
+work/
+simv
+simv.daidir/
+csrc/
+ucli.key
+*.log
+*.vpd
+*.fsdb
+
+# Waveform files
+*.vcd
+*.shm/
+
+# Synopsys / Cadence
+*.svf
+AN.DB
